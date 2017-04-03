@@ -1,12 +1,11 @@
 module Main where
 
 
-import Parse
 import System.Environment
 import Text.ParserCombinators.Parsec (parse)
+import Parse
+import Eval
 
 
 main :: IO ()
-main = do
-    (expr:_) <- getArgs
-    putStrLn . show . parse parseExpr "lisp" $ expr
+main = getArgs >>= putStrLn . show . fmap eval . parse parseExpr "lisp" . head

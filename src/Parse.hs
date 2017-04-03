@@ -11,16 +11,8 @@ module Parse (
 
 import Text.ParserCombinators.Parsec
 import Control.Monad (liftM)
+import Data
 
-
-data LispVal = Atom String
-    | List [LispVal]
-    | DottedList [LispVal] LispVal
-    | Integer Integer
-    | Float Float
-    | String String
-    | Bool Bool
-    deriving Show
 
 parseExpr :: Parser LispVal
 parseExpr = parseInteger
