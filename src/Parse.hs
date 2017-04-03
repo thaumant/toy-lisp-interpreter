@@ -1,13 +1,16 @@
 module Parse (
     parseExpr,
-    parseString,
+    parseList,
+    parseQuoted,
     parseAtom,
-    parseInteger,
-    parseFloat
+    parseString,
+    parseFloat,
+    parseInteger
 ) where
 
 
 import Text.ParserCombinators.Parsec
+import Control.Monad (liftM)
 
 
 data LispVal = Atom String
@@ -19,12 +22,26 @@ data LispVal = Atom String
     | Bool Bool
     deriving Show
 
-
 parseExpr :: Parser LispVal
-parseExpr = parseAtom
-    <|> parseString
+parseExpr = parseInteger
     <|> parseFloat
-    <|> parseInteger
+    <|> parseString
+    <|> parseAtom
+    <|> parseQuoted
+    <|> parseList
+
+parseList :: Parser LispVal
+parseList = do
+    char '('
+    exprs <- parseExpr `sepBy` (skipMany1 space)
+    char ')'
+    return $ List exprs
+
+parseQuoted :: Parser LispVal
+parseQuoted = do
+    char '\''
+    expr <- parseExpr
+    return $ List [Atom "quote", expr]
 
 parseString :: Parser LispVal
 parseString = do
