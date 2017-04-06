@@ -3,20 +3,25 @@ module Eval (
 ) where
 
 import Data
+import Control.Monad (mapM)
+import Control.Monad.Except (throwError)
 
-eval :: LispVal -> LispVal
-eval val@(String _) = val
-eval val@(Integer _) = val
-eval val@(Float _) = val
-eval val@(Bool _) = val
-eval (List [Atom "quote", val]) = val
-eval (List (Atom fname : args)) = applyFunc fname $ map eval args
-eval _ = undefined
+eval :: LispVal -> Either LispError LispVal
+eval val@(String _) = return val
+eval val@(Integer _) = return val
+eval val@(Float _) = return val
+eval val@(Bool _) = return val
+eval (List [Atom "quote", val]) = return val
+eval (List (Atom fname : args)) = mapM eval args >>= applyFunc fname -- applyFunc fname $ map eval args
+eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-applyFunc :: String -> [LispVal] -> LispVal
-applyFunc fname args = maybe (Bool False) ($ args) $ lookup fname primitives
+applyFunc :: String -> [LispVal] -> Either LispError LispVal
+applyFunc fname args = maybe
+                        (throwError $ NotFunction "Unrecognized primitive function args" fname)
+                        ($ args)
+                        (lookup fname primitives)
 
-primitives :: [(String, [LispVal] -> LispVal)]
+primitives :: [(String, [LispVal] -> Either LispError LispVal)]
 primitives = [
         ("+", numFn (+)),
         ("-", numFn (-)),
@@ -27,9 +32,9 @@ primitives = [
         -- ("remainder", numFn rem)
     ]
 
-numFn :: (Int -> Int -> Int) -> [LispVal] -> LispVal
-numFn fn args = Integer . foldl1 fn . map unpackNum $ args
+numFn :: (Int -> Int -> Int) -> [LispVal] -> Either LispError LispVal
+numFn fn args = mapM unpackNum args >>= return . Integer . foldl1 fn
 
-unpackNum :: LispVal -> Int
-unpackNum (Integer n) = n
-unpackNum _ = undefined
+unpackNum :: LispVal -> Either LispError Int
+unpackNum (Integer n) = Right n
+unpackNum notNum = throwError $ TypeMismatch "integer" notNum

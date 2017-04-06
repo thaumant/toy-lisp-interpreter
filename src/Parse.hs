@@ -5,14 +5,18 @@ module Parse (
     parseAtom,
     parseString,
     parseFloat,
-    parseInteger
+    parseInteger,
+    readExpr
 ) where
 
 
 import Text.ParserCombinators.Parsec
-import Control.Monad (liftM)
+import Control.Arrow (left)
 import Data
 
+
+readExpr :: String -> Either LispError LispVal
+readExpr input = left Parser (parse parseExpr "lisp" input)
 
 parseExpr :: Parser LispVal
 parseExpr = parseInteger
