@@ -2,9 +2,9 @@ module Parse (
     parseExpr,
     parseList,
     parseQuoted,
-    parseAtom,
+    parseBool,
+    parseSymbol,
     parseString,
-    parseFloat,
     parseInteger,
     readExpr
 ) where
@@ -20,9 +20,9 @@ readExpr input = left Parser (parse parseExpr "lisp" input)
 
 parseExpr :: Parser LispVal
 parseExpr = parseInteger
-    <|> parseFloat
     <|> parseString
-    <|> parseAtom
+    <|> parseBool
+    <|> parseSymbol
     <|> parseQuoted
     <|> parseList
 
@@ -37,7 +37,7 @@ parseQuoted :: Parser LispVal
 parseQuoted = do
     char '\''
     expr <- parseExpr
-    return $ List [Atom "quote", expr]
+    return $ List [Symbol "quote", expr]
 
 parseString :: Parser LispVal
 parseString = do
@@ -53,15 +53,18 @@ escapedChar 't' = '\t'
 escapedChar '\\' = '\\'
 escapedChar char = char
 
-parseAtom :: Parser LispVal
-parseAtom = do
+parseBool :: Parser LispVal
+parseBool = do
+    val <- (try $ string "#t") <|> string "#f"
+    return . Bool $ case val of
+        "#t" -> True
+        _ -> False
+
+parseSymbol :: Parser LispVal
+parseSymbol = do
     first <- letter <|> symbol
     rest <- many $ symbol <|> digit <|> letter
-    let name = first:rest
-    return $ case name of
-        "#t" -> Bool True
-        "#f" -> Bool False
-        _    -> Atom name
+    return . Symbol $ first:rest
 
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
@@ -69,9 +72,9 @@ symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 parseInteger :: Parser LispVal
 parseInteger = many1 digit >>= return . Integer . read
 
-parseFloat :: Parser LispVal
-parseFloat = try $ do
-    intPart <- many1 digit
-    char '.'
-    floatPart <- many1 digit
-    return . Float . read $ (intPart ++ "." ++ floatPart)
+-- parseFloat :: Parser LispVal
+-- parseFloat = try $ do
+--     intPart <- many1 digit
+--     char '.'
+--     floatPart <- many1 digit
+--     return . Float . read $ (intPart ++ "." ++ floatPart)
