@@ -1,15 +1,17 @@
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 
 import System.Environment
-import Text.ParserCombinators.Parsec (parse)
-import Parse (readExpr)
-import Eval
+import Repl (runREPL, evalAndPrint)
 
 
 main :: IO ()
 main = do
-    (input:_) <- getArgs
-    let result = readExpr input >>= eval
-    putStrLn $ show result
--- main = getArgs >>= putStrLn . show . fmap eval . parse parseExpr "lisp" . head
+    args <- getArgs
+    case length args of
+        0 -> runREPL
+        1 -> evalAndPrint $ args !! 0
+        otherwise -> putStrLn $ "Expected 0 or 1 argument, " ++ (show . length $ args) ++ " given"
