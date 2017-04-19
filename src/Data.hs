@@ -34,3 +34,5 @@ instance Show LispError where
     show (NotFunction message fname) = message ++ ": " ++ show fname
     show (UnboundVar message varname) = message ++ ": " ++ varname
     show (Default message) = "An error has occured: " ++ message
+
+type CanThrow = ExceptT LispError IO

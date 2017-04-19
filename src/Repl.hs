@@ -5,26 +5,35 @@ module Repl (
 
 
 import System.IO (putStr, hFlush, stdout)
+import Control.Monad.Except (throwError, runExceptT)
 import Data
 import Parse (readExpr)
-import Eval (eval)
+import Eval (Env, eval, newEnv)
 
-
-readPrompt :: String -> IO String
-readPrompt prompt = do
-    putStr prompt
-    hFlush stdout
-    getLine
-
-printResult :: Either LispError LispVal -> IO ()
-printResult (Left err) = putStrLn $ show err
-printResult (Right val) = putStrLn $ show val
-
-evalAndPrint :: String -> IO ()
-evalAndPrint input = printResult (readExpr input >>= eval)
 
 runREPL :: IO ()
-runREPL = do
-    input <- readPrompt "Lisp > "
+runREPL = newEnv >>= runREPL'
+
+evalAndPrint :: String -> IO ()
+evalAndPrint input = newEnv >>= flip evalAndPrint' input
+
+runREPL' :: Env -> IO ()
+runREPL' env = do
+    putStr "Lisp > "
+    hFlush stdout
+    input <- getLine
     if input == "exit" then return ()
-    else evalAndPrint input >> runREPL
+    else evalAndPrint' env input >> runREPL' env
+
+evalAndPrint' :: Env -> String -> IO ()
+evalAndPrint' env input = printResult ((liftThrows . readExpr $ input) >>= eval env)
+    where
+        liftThrows :: Either LispError a -> CanThrow a
+        liftThrows (Left err) = throwError err
+        liftThrows (Right val) = return val
+
+printResult :: CanThrow LispVal -> IO ()
+printResult val = runExceptT val >>= (putStrLn . extractValue)
+    where
+        extractValue (Right val) = show val
+        extractValue (Left err) = show err

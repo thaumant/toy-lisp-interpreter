@@ -1,42 +1,83 @@
 module Eval (
-    eval
+    eval,
+    newEnv,
+    Env
 ) where
 
 import Data
 import Control.Monad (mapM)
 import Control.Monad.Except (throwError)
+import Control.Monad.Trans (liftIO)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 
-eval :: LispVal -> Either LispError LispVal
-eval val@(String _) = return val
-eval val@(Integer _) = return val
-eval val@(Bool _) = return val
-eval (List [Symbol "quote", val]) = return val
-eval (List [Symbol "if", cond, left, right]) = do
-    result <- eval cond
+type Env = IORef [(String, IORef LispVal)]
+
+newEnv :: IO Env
+newEnv = newIORef []
+
+getVar :: Env -> String -> CanThrow LispVal
+getVar envRef name = do
+    env <- liftIO . readIORef $ envRef
+    case lookup name env of
+        (Just ref) -> liftIO . readIORef $ ref
+        Nothing -> throwError $ UnboundVar "Referencing an unbound variable" name
+
+setVar :: Env -> String -> LispVal -> CanThrow LispVal
+setVar envRef name val = do
+    env <- liftIO . readIORef $ envRef
+    case lookup name env of
+        (Just ref) -> liftIO $ writeIORef ref val
+        Nothing -> throwError $ UnboundVar "Setting an unbound variable" name
+    return val
+
+defineVar :: Env -> String -> LispVal -> CanThrow LispVal
+defineVar envRef name val = do
+    env <- liftIO . readIORef $ envRef
+    case lookup name env of
+        (Just ref) -> liftIO $ writeIORef ref val
+        Nothing -> do
+            ref <- liftIO $ newIORef val
+            liftIO $ writeIORef envRef ((name, ref) : env)
+    return val
+
+eval :: Env -> LispVal -> CanThrow LispVal
+eval env val@(String _) = return val
+eval env val@(Integer _) = return val
+eval env val@(Bool _) = return val
+eval env (Symbol name) = getVar env name
+eval env (List [Symbol "quote", val]) = return val
+eval env (List [Symbol "if", cond, left, right]) = do
+    result <- eval env cond
     case result of
-        Bool True -> eval left
-        Bool False -> eval right
+        Bool True -> eval env left
+        Bool False -> eval env right
         invalid -> throwError $ TypeMismatch "bool" invalid
-eval (List (Symbol "cond" : clauses)) = evalCond clauses
-eval (List (Symbol fname : args)) = mapM eval args >>= applyFunc fname
-eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval env (List (Symbol "cond" : clauses)) = evalCond env clauses
+eval env (List [Symbol "set!", Symbol name, val]) = eval env val >>= setVar env name
+eval env (List [Symbol "define", Symbol name, val]) = eval env val >>= defineVar env name
+eval env (List (Symbol fname : args)) = mapM (eval env) args >>= applyFunc env fname
+eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-applyFunc :: String -> [LispVal] -> Either LispError LispVal
-applyFunc fname args = maybe
-                        (throwError $ NotFunction "Unrecognized primitive function args" fname)
-                        ($ args)
-                        (lookup fname primitives)
+applyFunc :: Env -> String -> [LispVal] -> CanThrow LispVal
+applyFunc env fname args =
+    case lookup fname primitives of
+        (Just fn) -> liftThrows $ fn args
+        Nothing -> throwError $ NotFunction "Unrecognized primitive function args" fname
+    where
+        liftThrows :: Either LispError a -> CanThrow a
+        liftThrows (Left err) = throwError err
+        liftThrows (Right val) = return val
 
-evalCond :: [LispVal] -> Either LispError LispVal
-evalCond (List (Symbol "else" : branch : []) : _) = eval branch
-evalCond (List (cond : branch : []) : rest) = do
-    result <- eval cond
+evalCond :: Env -> [LispVal] -> CanThrow LispVal
+evalCond env (List (Symbol "else" : branch : []) : _) = eval env branch
+evalCond env (List (cond : branch : []) : rest) = do
+    result <- eval env cond
     case result of
-        Bool True -> eval branch
-        Bool False -> evalCond rest
+        Bool True -> eval env branch
+        Bool False -> evalCond env rest
         invalid -> throwError $ TypeMismatch "bool" invalid
-evalCond (pair : rest) = throwError $ TypeMismatch "pair ('condition 'branch)" pair
-evalCond [] = throwError $ Default "Exhausted cond clauses"
+evalCond env (pair : rest) = throwError $ TypeMismatch "pair ('condition 'branch)" pair
+evalCond env [] = throwError $ Default "Exhausted cond clauses"
 
 primitives :: [(String, [LispVal] -> Either LispError LispVal)]
 primitives = [
