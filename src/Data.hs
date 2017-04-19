@@ -3,13 +3,17 @@ module Data where
 
 import Control.Monad.Except
 import Text.ParserCombinators.Parsec (ParseError)
+import Data.IORef (IORef)
 
+type Env = IORef [(String, IORef LispVal)]
 
 data LispVal = Symbol String
     | List [LispVal]
     | Integer Int
     | String String
     | Bool Bool
+    | PrimitiveFunc ([LispVal] -> CanThrow LispVal)
+    | Func { args :: [String], body :: [LispVal], closure :: Env }
 
 instance Show LispVal where
     show (Symbol s) = s
@@ -17,6 +21,8 @@ instance Show LispVal where
     show (Integer i) = show i
     show (String s) = "\"" ++ s ++ "\""
     show (Bool b) = if b then "#t" else "#f"
+    show (PrimitiveFunc _) = "<primitive>"
+    show (Func args _ _) = "(lambda (" ++ (unwords . map show $ args) ++ ") ...)"
 
 data LispError = NumArgs Integer [LispVal]
     | TypeMismatch String LispVal

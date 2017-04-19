@@ -5,15 +5,17 @@ module Eval (
 ) where
 
 import Data
-import Control.Monad (mapM)
+import Control.Monad (mapM, liftM)
 import Control.Monad.Except (throwError)
 import Control.Monad.Trans (liftIO)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 
-type Env = IORef [(String, IORef LispVal)]
-
 newEnv :: IO Env
-newEnv = newIORef []
+newEnv = mapM fromPrimitive primitives >>= newIORef
+    where
+        fromPrimitive (name, fn) = do
+            ref <- newIORef (PrimitiveFunc fn)
+            return (name, ref)
 
 getVar :: Env -> String -> CanThrow LispVal
 getVar envRef name = do
@@ -54,19 +56,29 @@ eval env (List [Symbol "if", cond, left, right]) = do
         invalid -> throwError $ TypeMismatch "bool" invalid
 eval env (List (Symbol "cond" : clauses)) = evalCond env clauses
 eval env (List [Symbol "set!", Symbol name, val]) = eval env val >>= setVar env name
+eval env (List (Symbol "lambda" : List args : body)) = return $ Func (map show args) body env
 eval env (List [Symbol "define", Symbol name, val]) = eval env val >>= defineVar env name
-eval env (List (Symbol fname : args)) = mapM (eval env) args >>= applyFunc env fname
+eval env (List (Symbol fname : args)) = do
+    fn <- getVar env fname
+    args <- mapM (eval env) args
+    applyFunc fn args
 eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-applyFunc :: Env -> String -> [LispVal] -> CanThrow LispVal
-applyFunc env fname args =
-    case lookup fname primitives of
-        (Just fn) -> liftThrows $ fn args
-        Nothing -> throwError $ NotFunction "Unrecognized primitive function args" fname
+applyFunc :: LispVal -> [LispVal] -> CanThrow LispVal
+applyFunc (PrimitiveFunc fn) params = fn params
+applyFunc (Func args body closure) params = do
+        if length args /= length params then throwError $ NumArgs (toInteger $ length args) params
+        else do
+            env <- liftIO . bindVars closure $ zip args params
+            liftM last . mapM (eval env) $ body
     where
-        liftThrows :: Either LispError a -> CanThrow a
-        liftThrows (Left err) = throwError err
-        liftThrows (Right val) = return val
+        bindVars :: Env -> [(String, LispVal)] -> IO Env
+        bindVars envRef params = readIORef envRef >>= extendEnv params >>= newIORef
+            where
+                extendEnv params env = liftM (++ env) . mapM addBinding $ params
+                addBinding (name, val) = do
+                    ref <- newIORef val
+                    return (name, ref)
 
 evalCond :: Env -> [LispVal] -> CanThrow LispVal
 evalCond env (List (Symbol "else" : branch : []) : _) = eval env branch
@@ -79,7 +91,7 @@ evalCond env (List (cond : branch : []) : rest) = do
 evalCond env (pair : rest) = throwError $ TypeMismatch "pair ('condition 'branch)" pair
 evalCond env [] = throwError $ Default "Exhausted cond clauses"
 
-primitives :: [(String, [LispVal] -> Either LispError LispVal)]
+primitives :: [(String, [LispVal] -> CanThrow LispVal)]
 primitives = [
         ("+", numFn (+)),
         ("-", numFn (-)),
@@ -102,14 +114,14 @@ primitives = [
         ("=", eqv)
     ]
 
-numFn :: (Int -> Int -> Int) -> [LispVal] -> Either LispError LispVal
+numFn :: (Int -> Int -> Int) -> [LispVal] -> CanThrow LispVal
 numFn fn args = mapM unpackNum args >>= return . Integer . foldl1 fn
 
 numBoolBinOp  = boolBinOp unpackNum
 strBoolBinOp  = boolBinOp unpackStr
 boolBoolBinOp = boolBinOp unpackBool
 
-boolBinOp :: (LispVal -> Either LispError a) -> (a -> a -> Bool) -> [LispVal] -> Either LispError LispVal
+boolBinOp :: (LispVal -> CanThrow a) -> (a -> a -> Bool) -> [LispVal] -> CanThrow LispVal
 boolBinOp unpack op args =
     if length args /= 2 then throwError $ NumArgs 2 args
     else do
@@ -117,42 +129,43 @@ boolBinOp unpack op args =
         right <- unpack $ args !! 1
         return . Bool $ left `op` right
 
-unpackNum :: LispVal -> Either LispError Int
+unpackNum :: LispVal -> CanThrow Int
 unpackNum (Integer n) = return n
 unpackNum notNum = throwError $ TypeMismatch "integer" notNum
 
-unpackStr :: LispVal -> Either LispError String
+unpackStr :: LispVal -> CanThrow String
 unpackStr (String s) = return s
 unpackStr notStr = throwError $ TypeMismatch "string" notStr
 
-unpackBool :: LispVal -> Either LispError Bool
+unpackBool :: LispVal -> CanThrow Bool
 unpackBool (Bool s) = return s
 unpackBool notBool = throwError $ TypeMismatch "bool" notBool
 
-car :: [LispVal] -> Either LispError LispVal
+car :: [LispVal] -> CanThrow LispVal
 car [List (x:_)] = return x
 car [art] = throwError $ TypeMismatch "pair" art
 car args  = throwError $ NumArgs 1 args
 
-cdr :: [LispVal] -> Either LispError LispVal
+cdr :: [LispVal] -> CanThrow LispVal
 cdr [List (_:xs)] = return $ List xs
 cdr [art] = throwError $ TypeMismatch "pair" art
 cdr args  = throwError $ NumArgs 1 args
 
-cons :: [LispVal] -> Either LispError LispVal
+cons :: [LispVal] -> CanThrow LispVal
 cons [x, List xs] = return $ List $ x : xs
 cons [x, y] = throwError $ TypeMismatch "list" y
 cons args = throwError $ NumArgs 2 args
 
-eqv :: [LispVal] -> Either LispError LispVal
-eqv [Integer x,   Integer y]   = Right . Bool $ x == y
-eqv [String x,    String y]    = Right . Bool $ x == y
-eqv [Bool x,      Bool y]      = Right . Bool $ x == y
-eqv [Symbol x,    Symbol y]    = Right . Bool $ x == y
-eqv [List [],     List []]     = Right . Bool $ True
-eqv [List (x:xs), List (y:ys)] = case eqv [x, y] of
-    Left err -> Right . Bool $ False
-    Right (Bool False) -> Right . Bool $ False
-    Right (Bool True) -> eqv [List xs, List ys]
-eqv [_, _] = Right . Bool $ False
+eqv :: [LispVal] -> CanThrow LispVal
+eqv [Integer x,   Integer y]   = return . Bool $ x == y
+eqv [String x,    String y]    = return . Bool $ x == y
+eqv [Bool x,      Bool y]      = return . Bool $ x == y
+eqv [Symbol x,    Symbol y]    = return . Bool $ x == y
+eqv [List [],     List []]     = return . Bool $ True
+eqv [List (x:xs), List (y:ys)] = do
+    eqvFirst <- eqv [x, y]
+    case eqvFirst of
+        (Bool True) -> eqv [List xs, List ys]
+        _ -> return . Bool $ False
+eqv [_, _] = return . Bool $ False
 eqv args = throwError $ NumArgs 2 args
