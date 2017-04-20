@@ -1,1 +1,1 @@
-# Write Yourself a Scheme - Implementation & Playground
+# Simple lisp interpreter written in Haskell
